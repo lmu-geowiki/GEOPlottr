@@ -1,0 +1,183 @@
+import os
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QFileDialog, QMessageBox,
+    QStackedWidget, QSplitter
+)
+from gui.components.action_button import ActionButton
+from PyQt6.QtCore import Qt
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
+class BasePlotView(QWidget):
+    """
+    A unified base view for all plotting tools.
+    Provides standardized UI layout, buttons, and download logic.
+    """
+    def __init__(self, on_new_sample, parent=None):
+        super().__init__(parent)
+        
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(28)
+        
+        # 1. Top layout for optional tool-specific controls (e.g. QAPF/TAS toggles)
+        self.top_container = QWidget()
+        self.top_layout = QHBoxLayout(self.top_container)
+        self.top_layout.setContentsMargins(0, 0, 0, 0)
+        self.top_layout.setAlignment(Qt.AlignmentFlag.AlignBottom)
+        self.layout.addWidget(self.top_container)
+        
+        # 2. Main canvas area
+        self.canvas_container = QStackedWidget()
+        self.layout.addWidget(self.canvas_container, stretch=1)
+        
+        # 3. Optional note space below canvas
+        self.note_label = QLabel(" ")
+        self.note_label.setFixedHeight(20)
+        self.note_label.setObjectName("PlotNoteLabel")
+        self.note_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(self.note_label)
+        
+        self.layout.addSpacing(15)
+        
+        # 4. Standard bottom buttons
+        self.btn_layout = QHBoxLayout()
+        self.btn_layout.setSpacing(10)
+        
+        self.download_btn = ActionButton("Download Image", style_type="primary")
+        self.download_btn.setObjectName("PlotDownloadBtn")
+        self.btn_layout.addWidget(self.download_btn)
+        
+        self.new_sample_btn = ActionButton("New sample", style_type="secondary")
+        self.new_sample_btn.setObjectName("PlotNewSampleBtn")
+        self.new_sample_btn.clicked.connect(on_new_sample)
+        self.btn_layout.addWidget(self.new_sample_btn)
+        
+        self.layout.addLayout(self.btn_layout)
+        
+        self.current_fig = None
+        self.canvas = None
+        self._note_key = None
+        
+        from utils.i18n import i18n, tr
+        self.retranslate_ui()
+        i18n.language_changed.connect(self.retranslate_ui)
+
+    def retranslate_ui(self, lang=None):
+        from utils.i18n import tr
+        self.download_btn.setText(tr("btn_download_image"))
+        self.new_sample_btn.setText(tr("btn_new_sample"))
+        if self._note_key:
+            self.note_label.setText(tr(self._note_key))
+        
+    def add_top_widget(self, widget):
+        """Adds a tool-specific control widget above the canvas."""
+        self.top_layout.addWidget(widget)
+        
+    def add_top_stretch(self):
+        """Pushes top controls to the left by adding a stretch."""
+        self.top_layout.addStretch()
+
+    def set_note(self, text, key=None):
+        """Displays a standardized warning/note below the canvas."""
+        if key:
+            self._note_key = key
+            from utils.i18n import tr
+            self.note_label.setText(tr(key))
+        else:
+            self.note_label.setText(text)
+        
+    def set_plot(self, fig):
+        """Embeds the generated matplotlib Figure into the UI."""
+        self.current_fig = fig
+        old_canvas = getattr(self, 'canvas', None)
+        
+        self.canvas = FigureCanvas(fig)
+        self.canvas.setObjectName("PlotCanvas")
+        self.canvas_container.addWidget(self.canvas)
+        self.canvas_container.setCurrentWidget(self.canvas)
+        
+        if old_canvas:
+            self.canvas_container.removeWidget(old_canvas)
+            old_canvas.deleteLater()
+        
+    def _choose_download_style(self, parent_widget):
+        """Asks whether to export the light figure or the on-screen plot."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QRadioButton, QButtonGroup, QHBoxLayout
+        from utils.i18n import tr
+
+        dialog = QDialog(parent_widget)
+        dialog.setWindowTitle(tr("dialog_save_plot"))
+        dialog.setModal(True)
+        dialog.setStyleSheet("""
+            QDialog { background-color: #161b22; }
+            QLabel { color: #f0f3f6; font-size: 15px; background: transparent; }
+            QRadioButton { color: #f0f3f6; font-size: 14px; spacing: 8px; background: transparent; }
+            QRadioButton::indicator { width: 16px; height: 16px; }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 22, 24, 20)
+        layout.setSpacing(14)
+
+        prompt = QLabel(tr("download_style_prompt"))
+        prompt.setWordWrap(True)
+        layout.addWidget(prompt)
+
+        light_option = QRadioButton(tr("download_style_light"))
+        transparent_option = QRadioButton(tr("download_style_transparent"))
+        light_option.setChecked(True)
+        group = QButtonGroup(dialog)
+        group.addButton(light_option)
+        group.addButton(transparent_option)
+        layout.addWidget(light_option)
+        layout.addWidget(transparent_option)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        buttons.addStretch()
+        cancel_btn = ActionButton(tr("download_style_cancel"), style_type="secondary")
+        continue_btn = ActionButton(tr("download_style_continue"), style_type="primary")
+        cancel_btn.clicked.connect(dialog.reject)
+        continue_btn.clicked.connect(dialog.accept)
+        buttons.addWidget(cancel_btn)
+        buttons.addWidget(continue_btn)
+        layout.addLayout(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return "transparent" if transparent_option.isChecked() else "light"
+
+    def handle_download(self, parent_widget, generate_light_fig_func, default_filename):
+        """
+        Standardized download handler.
+        generate_light_fig_func should take no arguments and return a Figure styled for light mode.
+        The transparent export saves the figure currently shown in the GUI.
+        """
+        if not self.current_fig:
+            return
+
+        from utils.i18n import tr
+        style = self._choose_download_style(parent_widget)
+        if style is None:
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            parent_widget,
+            tr("dialog_save_plot"),
+            os.path.expanduser(f"~/Desktop/{default_filename}"),
+            "PNG Images (*.png);;PDF Documents (*.pdf);;SVG Graphics (*.svg)"
+        )
+
+        if file_path:
+            try:
+                if style == "transparent":
+                    self.current_fig.savefig(
+                        file_path, dpi=300, bbox_inches='tight', transparent=True
+                    )
+                else:
+                    fig = generate_light_fig_func()
+                    fig.savefig(file_path, dpi=300, bbox_inches='tight')
+                QMessageBox.information(parent_widget, tr("dialog_success"), tr("dialog_saved_to", path=file_path))
+            except Exception as e:
+                QMessageBox.critical(parent_widget, tr("dialog_error"), tr("dialog_save_failed", error=str(e)))

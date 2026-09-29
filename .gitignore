@@ -1,0 +1,46 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+
+# === Virtual environments ===
+.env
+.venv
+env/
+venv/
+ENV/
+
+# === Build artifacts ===
+build/
+dist/
+
+# === PyInstaller output ===
+# The whole directory created during packaging
+*.dmg
+*.app
+*.exe
+*.zip
+
+# === IDEs / OS ===
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# === Data ===
+# User generated data files that should not be tracked
+data/
+
+# === Resources (large images) ===
+resources/**/*.png
+!resources/icons/EN.png
+!resources/icons/DE.png
+
+# === Test artifacts ===
+.pytest_cache/
+
+# === Logs ===
+.github/workflows/*.log
+generate_examples.py
+__init__.py
